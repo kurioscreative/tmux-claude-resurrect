@@ -1,0 +1,14 @@
+{
+  "name": "tmux-claude-resurrect",
+  "owner": {
+    "name": "kurioscreative"
+  },
+  "plugins": [
+    {
+      "name": "tmux-pane-stamp",
+      "source": "./",
+      "description": "SessionStart/Stop hook that stamps the pane's Claude Code session id for tmux-resurrect."
+    }
+  ],
+  "description": "Resume Claude Code sessions per tmux pane when tmux-resurrect restores."
+}
