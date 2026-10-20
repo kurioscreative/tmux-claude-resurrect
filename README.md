@@ -227,7 +227,11 @@ test/run.sh
 - **Wrappers**: a claude launched through a wrapper script, so that its parent is not the pane shell, is never stamped and restores as a fresh `claude`
 - **Empty titles**: a pane whose title is empty at save time produces a corrupt row until the title is refilled; the hook prevents this going forward, but check `panes with empty title now` in the status output
 - **`@resurrect-processes 'claude'` is an exact word match**: the `~claude` (substring) form isn't needed, since every row is normalized to bare `claude`, and would also match e.g. `nvim` editing a path containing "claude"
-- **Print-mode (`claude -p`)** sessions are intentionally not restored; they're one-shot commands
+- **Print-mode (`claude -p`)** sessions are intentionally not restored; they're one-shot commands. The check is on argv as `ps` shows it, so a prompt argument containing ` -p ` also looks like print mode
+- **Other flags are dropped**: a row restores as `claude -r <id>` (or bare `claude`), so `--model`, `--permission-mode` and the like are not replayed. An unstamped row that already carries `-r`/`--resume <id>` keeps that target
+- **Stale stamps after a server restart**: pane ids start again at `%0`, and stamp files are never pruned. A claude that never stamps (started before the hooks were installed, or through a wrapper) in a reused pane id would be saved with the previous server's session for that id. Every claude started after install stamps on `SessionStart`, so this needs the hooks to be off
+- **Panes started directly as claude** (`tmux new-window claude`) have no pane shell, so neither the stamp hook nor the status script sees them; tmux-resurrect cannot restore such panes either
+- **tmux-resurrect's own `ps.sh`** matches the pane pid as a prefix (`grep "^${PANE_PID}"`) and lists every child of the pane shell, so `$11` can hold several lines or a background job rather than claude. The status script looks at every child; the rewrite only sees what resurrect recorded
 - **Freshness**: a session started after the last save isn't in it yet; the status script reports this as `NOT IN SAVE`
 
 ## Dependencies

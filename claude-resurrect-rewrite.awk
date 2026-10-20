@@ -19,15 +19,24 @@ BEGIN {
     }
 }
 # A row whose pane_command ($10) is all digits is a shifted row: tmux-resurrect
-# collapses an empty pane_title under `IFS=tab read`, so history_size lands in
-# $10 and $11 is argv of some unrelated process. Never turn that into a claude.
+# collapses an empty pane_title under `IFS=tab read`, so pane_pid lands in $10
+# and $11 is the argv of whatever process history_size happens to name. Never
+# turn that into a claude. (A real claude row has a version string there.)
 $1 == "pane" && $10 !~ /^[0-9]+$/ {
     cmd = substr($11, 2)
     split(cmd, words, " ")
     n = split(words[1], parts, "/")
     if (parts[n] == "claude" && cmd !~ /(^| )(-p|--print)( |$)/) {
         key = $2 ":" $3 ":" $6
-        $11 = (key in map) ? ":claude -r " map[key] : ":claude"
+        if (key in map)
+            $11 = ":claude -r " map[key]
+        else if (match(cmd, /(^| )(-r|--resume) [^ ]+/)) {
+            # Unstamped but already resuming (restored before the hook existed):
+            # keep that target rather than starting a fresh session.
+            split(substr(cmd, RSTART, RLENGTH), r, " ")
+            $11 = ":claude -r " r[2]
+        } else
+            $11 = ":claude"
     }
 }
 { print }

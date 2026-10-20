@@ -14,13 +14,17 @@ set -euo pipefail
 
 SESSION_DIR="$HOME/.tmux/claude-sessions"
 
-# Resolve the resurrect save directory (respects @resurrect-dir if set)
-RESURRECT_DIR=$(tmux show-option -gqv @resurrect-dir 2>/dev/null)
-: "${RESURRECT_DIR:=${XDG_DATA_HOME:-$HOME/.local/share}/tmux/resurrect}"
+# Resolve the save directory the way tmux-resurrect does: @resurrect-dir with
+# ~ and $HOME expanded, else ~/.tmux/resurrect if it exists, else the XDG path.
+RESURRECT_DIR=$(tmux show-option -gqv @resurrect-dir 2>/dev/null | sed "s,\$HOME,$HOME,g; s,~,$HOME,g")
+if [[ -z "$RESURRECT_DIR" ]]; then
+    RESURRECT_DIR="$HOME/.tmux/resurrect"
+    [[ -d "$RESURRECT_DIR" ]] || RESURRECT_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/tmux/resurrect"
+fi
 [[ -d "$RESURRECT_DIR" ]] || exit 0
 
-LAST="$RESURRECT_DIR/last"
-[[ -L "$LAST" || -f "$LAST" ]] || exit 0
+LAST="$RESURRECT_DIR/last"   # tmux-resurrect always writes this as a symlink
+[[ -L "$LAST" ]] || exit 0
 
 SAVE_FILE="$RESURRECT_DIR/$(readlink "$LAST")"
 [[ -f "$SAVE_FILE" ]] || exit 0
@@ -34,10 +38,10 @@ if [[ -d "$SESSION_DIR" ]]; then
     tmux list-panes -a -F '#{session_name}|#{window_index}|#{pane_index}|#{pane_id}' 2>/dev/null |
     while IFS='|' read -r sess win pane_idx pane_id; do
         sf="$SESSION_DIR/$pane_id"
-        if [[ -f "$sf" ]]; then
-            sid=$(cat "$sf")
-            [[ -n "$sid" ]] && echo "${sess}:${win}:${pane_idx}=${sid}"
-        fi
+        # `|| true` keeps an empty stamp (mid-write, or a stamp that vanished
+        # between the test and the read) from failing the loop under errexit.
+        sid=$(cat "$sf" 2>/dev/null || true)
+        [[ -z "$sid" ]] || echo "${sess}:${win}:${pane_idx}=${sid}"
     done > "$MAPPING"
 fi
 

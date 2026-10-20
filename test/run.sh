@@ -25,6 +25,7 @@ row() { printf 'pane\tproj\t%s\t0\t:\t%s\t%s\t:/Users/me/proj\t1\t%s\t:%s\n' "$@
   row 2 1 'title' 2.1.304 '/Users/me/.local/bin/claude -r old-id'    # stamped after /clear: id must change
   row 3 1 'title' 2.1.304 '/Users/me/.local/bin/claude -p "hi"'      # print mode: untouched
   row 4 1 'title' 2.1.304 '/Users/me/.local/bin/claude'              # unstamped: bare claude
+  row 8 1 'title' 2.1.304 '/Users/me/.local/bin/claude --resume keep-me'  # unstamped but resuming: keep target
   row 5 1 'title' nvim    'nvim /tmp/claude-501/x/.claude/notes.md'  # not claude
   row 6 1 'title' zsh     ''                                         # stamped but running a shell
   # shifted row from an empty pane_title: $10 is history_size, $11 is garbage
@@ -40,7 +41,8 @@ f11() { awk -F'\t' -v w="$1" '$1=="pane" && $3==w {print $11}' "$tmp/out"; }
 [[ "$(f11 5)" == ':nvim /tmp/claude-501/x/.claude/notes.md' ]]    && ok "non-claude command untouched" || bad "nvim: $(f11 5)"
 [[ "$(f11 6)" == ':' ]]                                           && ok "stamped shell pane untouched" || bad "shell: $(f11 6)"
 [[ "$(f11 7)" == ':/Users/me/.local/bin/claude -r ghost' ]]       && ok "shifted row left alone" || bad "shifted: $(f11 7)"
-[[ "$(grep -c '' "$tmp/out")" == 8 ]]                              && ok "row count preserved" || bad "row count"
+[[ "$(f11 8)" == ':claude -r keep-me' ]]                          && ok "unstamped --resume keeps its target" || bad "unstamped resume: $(f11 8)"
+[[ "$(grep -c '' "$tmp/out")" == 9 ]]                              && ok "row count preserved" || bad "row count"
 [[ "$(tail -1 "$tmp/out")" == "$(tail -1 "$tmp/save")" ]]         && ok "window row untouched" || bad "window row"
 
 # ---------- 2. stamp hook under a throwaway tmux server ----------
@@ -58,12 +60,37 @@ SH
 cat > "$tmp/inner.sh" <<SH
 printf '{"session_id":"inner-session"}' | "$ROOT/claude-pane-stamp.sh"
 SH
-tmux -L "$S" -f /dev/null new-session -d -s t -x 80 -y 24
+# /bin/sh as the pane shell: no user rc files, so the pane is ready at once.
+tmux -L "$S" -f /dev/null new-session -d -s t -x 80 -y 24 /bin/sh
 tmux -L "$S" send-keys -t t "HOME='$home' '$tmp/bin/claude' '$tmp/outer.sh'" Enter
 for _ in $(seq 1 50); do [[ -f "$tmp/done" ]] && break; sleep 0.1; done
 pane=$(tmux -L "$S" display -p -t t '#{pane_id}')
 stamp=$(cat "$home/.tmux/claude-sessions/$pane" 2>/dev/null)
 [[ -f "$tmp/done" ]] && ok "fake claude ran in the pane" || bad "fake claude never finished"
 [[ "$stamp" == "outer-session" ]] && ok "pane stamped by the top-level claude, nested claude ignored" || bad "stamp is '$stamp'"
+
+# ---------- 3. save hook against the throwaway server ----------
+# Two panes: the first stamped, the last with an EMPTY stamp file (a stamp
+# caught mid-write). Under errexit+pipefail an empty stamp listed last used to
+# abort the hook before it rewrote anything.
+tmux -L "$S" split-window -t t /bin/sh
+sock=$(tmux -L "$S" display -p '#{socket_path}')
+rdir="$tmp/resurrect"; mkdir -p "$rdir" "$home/.tmux/claude-sessions"
+tmux -L "$S" set -g @resurrect-dir "$rdir"
+panes=$(tmux -L "$S" list-panes -t t -F $'#{pane_id}\t#{session_name}\t#{window_index}\t#{pane_index}')
+first=$(printf '%s\n' "$panes" | head -1); last=$(printf '%s\n' "$panes" | tail -1)
+IFS=$'\t' read -r p1 s1 w1 i1 <<<"$first"
+IFS=$'\t' read -r p2 s2 w2 i2 <<<"$last"
+echo "eeeeeeee-0000-0000-0000-00000000000e" > "$home/.tmux/claude-sessions/$p1"
+: > "$home/.tmux/claude-sessions/$p2"
+{
+  printf 'pane\t%s\t%s\t1\t:*\t%s\tt\t:/tmp\t1\t2.1.304\t:/Users/me/.local/bin/claude\n' "$s1" "$w1" "$i1"
+  printf 'pane\t%s\t%s\t1\t:*\t%s\tt\t:/tmp\t0\t2.1.304\t:/Users/me/.local/bin/claude\n' "$s2" "$w2" "$i2"
+} > "$rdir/save.txt"
+ln -s save.txt "$rdir/last"
+if HOME="$home" TMUX="$sock,0,0" ./claude-resurrect-save.sh; then ok "save hook exits 0 with an empty stamp listed last"; else bad "save hook exited $?"; fi
+got1=$(awk -F'\t' -v i="$i1" '$6==i {print $11}' "$rdir/save.txt"); got2=$(awk -F'\t' -v i="$i2" '$6==i {print $11}' "$rdir/save.txt")
+[[ "$got1" == ':claude -r eeeeeeee-0000-0000-0000-00000000000e' ]] && ok "save hook maps the live pane by session:window:pane" || bad "mapped row: '$got1'"
+[[ "$got2" == ':claude' ]] && ok "empty stamp falls back to bare claude" || bad "empty-stamp row: '$got2'"
 
 echo; [[ $fail == 0 ]] && echo "all tests passed" || { echo "some tests FAILED"; exit 1; }
