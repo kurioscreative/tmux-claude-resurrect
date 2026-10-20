@@ -18,7 +18,7 @@ pane_pid=$(tmux display -p -t "$TMUX_PANE" '#{pane_pid}' 2>/dev/null) || exit 0
 p=$PPID
 while [ "${p:-0}" -gt 1 ]; do
     cmd=$(ps -o command= -p "$p" 2>/dev/null); cmd=${cmd%% *}
-    [ "$(basename "${cmd:-/}")" = claude ] && break
+    [ "$(basename -- "${cmd:-/}")" = claude ] && break
     p=$(ps -o ppid= -p "$p" 2>/dev/null | tr -d ' ')
 done
 [ "${p:-0}" -gt 1 ] || exit 0
@@ -28,6 +28,8 @@ done
 
 sid=$(jq -r '.session_id // empty' 2>/dev/null)
 [ -n "$sid" ] || exit 0
-mkdir -p "$HOME/.tmux/claude-sessions"
-printf '%s\n' "$sid" > "$HOME/.tmux/claude-sessions/$TMUX_PANE"
+# Write atomically: the post-save hook may read this file at any moment.
+dir="$HOME/.tmux/claude-sessions"
+mkdir -p "$dir"
+printf '%s\n' "$sid" > "$dir/$TMUX_PANE.tmp" && mv -f "$dir/$TMUX_PANE.tmp" "$dir/$TMUX_PANE"
 exit 0
