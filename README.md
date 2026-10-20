@@ -43,66 +43,54 @@ Claude Code supports `claude -r <session_id>` to resume a specific conversation.
   └─────────────┘                          └──────────────────────────┘
 ```
 
-Three moving parts, plus a check:
+Three moving parts, plus a check. They ship as two plugins from this one repo, whose only contract is the directory `~/.tmux/claude-sessions/<pane_id>`, so either half can be installed, upgraded or removed on its own:
 
-1. **Claude Code hook `claude-pane-stamp.sh`** (on `SessionStart` and `Stop`): writes `session_id` to `~/.tmux/claude-sessions/$TMUX_PANE`, but only when the claude that fired it is the pane shell's direct child
-2. **tmux-resurrect post-save hook `claude-resurrect-save.sh`**: after each save, maps pane IDs to save-file rows and rewrites every claude row to bare `claude`, with `-r <session_id>` when the pane is stamped
-3. **tmux `pane-title-changed` hook**: refills empty pane titles, which otherwise corrupt the save file (see [Empty pane titles](#empty-pane-titles-corrupt-the-save-file))
+1. **Claude Code hook `claude-pane-stamp.sh`** (on `SessionStart` and `Stop`, registered by the Claude Code plugin `tmux-pane-stamp`): writes `session_id` to `~/.tmux/claude-sessions/$TMUX_PANE`, but only when the claude that fired it is the pane shell's direct child
+2. **tmux-resurrect post-save hook `claude-resurrect-save.sh`** (wired up by the tmux plugin): after each save, maps pane IDs to save-file rows and rewrites every claude row to bare `claude`, with `-r <session_id>` when the pane is stamped
+3. **tmux `pane-title-changed` hook** (installed by the tmux plugin): refills empty pane titles, which otherwise corrupt the save file (see [Empty pane titles](#empty-pane-titles-corrupt-the-save-file))
 4. **`claude-resurrect-status.sh`**: answers "am I safe to restart?" by reconciling live claude panes against the last save
 
 ## Installation
 
-### 1. Claude Code stamp hook
+### 1. tmux half (tpm or tempo)
 
-```bash
-mkdir -p ~/.claude/hooks
-cp claude-pane-stamp.sh ~/.claude/hooks/
-chmod +x ~/.claude/hooks/claude-pane-stamp.sh
-```
-
-Add to `~/.claude/settings.json` inside the `"hooks"` object:
-
-```json
-"SessionStart": [
-  { "hooks": [ { "type": "command", "command": "~/.claude/hooks/claude-pane-stamp.sh" } ] }
-],
-"Stop": [
-  { "hooks": [ { "type": "command", "command": "~/.claude/hooks/claude-pane-stamp.sh" } ] }
-]
-```
-
-Requires `jq` on PATH. `Stop` re-stamps on every turn, so sessions that were already running when you installed this register themselves the next time they finish a turn. No seeding step, no restarts.
-
-### 2. tmux-resurrect hook scripts
-
-```bash
-mkdir -p ~/.tmux/hooks
-cp claude-resurrect-save.sh claude-resurrect-rewrite.awk claude-resurrect-status.sh ~/.tmux/hooks/
-chmod +x ~/.tmux/hooks/claude-resurrect-*
-```
-
-`claude-resurrect-rewrite.awk` must sit next to `claude-resurrect-save.sh`; the save hook calls it via `$(dirname "$0")`.
-
-### 3. tmux.conf
-
-Use upstream tmux-resurrect (no fork, no custom strategy). Add before the `run-shell` line for TPM / tmux-resurrect:
+Requires [tmux-plugins/tmux-resurrect](https://github.com/tmux-plugins/tmux-resurrect); declare it too, since neither tpm nor tempo can declare a dependency. In `~/.tmux.conf`:
 
 ```tmux
 set -g @plugin 'tmux-plugins/tmux-resurrect'
-set -g @resurrect-processes 'claude'
-set -g @resurrect-hook-post-save-all '~/.tmux/hooks/claude-resurrect-save.sh'
-
-# Refill an empty pane title so tmux-resurrect's save rows don't shift.
-set-hook -g pane-title-changed "if -F '#{pane_title}' '' \"run-shell 'tmux select-pane -t #{hook_pane} -T #{host}'\""
+set -g @plugin 'kurioscreative/tmux-claude-resurrect'
 ```
 
-Then reload: `tmux source-file ~/.tmux.conf`
+Then `prefix + I` (tpm) or `tempo install`. This clones the repo to `~/.tmux/plugins/tmux-claude-resurrect`, and at every server start `claude-resurrect.tmux`:
 
-The `set-hook` line must be exactly this shape (verified on tmux 3.7c): `#{hook_pane}` and `#{host}` only expand inside `run-shell`, and the `if -F` guard stops the hook from re-firing on its own title change forever.
+- appends `claude` to `@resurrect-processes` if it isn't there, keeping your own list (`vim`, `ssh`, ...)
+- sets `@resurrect-hook-post-save-all` to its own `claude-resurrect-save.sh`
+- installs the `pane-title-changed` refill hook
 
-### 4. Refill titles that are already empty
+Nothing else goes in `tmux.conf`. Order relative to tmux-resurrect and tmux-continuum doesn't matter: tmux-resurrect reads these options at save time, not at load time.
 
-The hook only fires on a title change. Panes that are empty right now need a one-time fix:
+### 2. Claude Code half (plugin)
+
+The repo is also a Claude Code marketplace named `tmux-claude-resurrect`, holding one plugin, `tmux-pane-stamp` (plugin names starting with `claude-` are reserved). On Claude Code 2.1.275 or later, one step:
+
+```
+/plugin install tmux-pane-stamp --marketplace kurioscreative/tmux-claude-resurrect
+```
+
+or from a shell: `claude plugin install tmux-pane-stamp --marketplace kurioscreative/tmux-claude-resurrect`. On older versions, two steps:
+
+```bash
+claude plugin marketplace add kurioscreative/tmux-claude-resurrect
+claude plugin install tmux-pane-stamp@tmux-claude-resurrect
+```
+
+`hooks/hooks.json` registers `claude-pane-stamp.sh` on `SessionStart` and `Stop` via `${CLAUDE_PLUGIN_ROOT}`. Plugin hooks merge with any hooks in `~/.claude/settings.json`, so there is nothing to edit there. Plugins load at session start; in a session that is already running, `/reload-plugins`. Claude Code copies plugins into a versioned cache, so `${CLAUDE_PLUGIN_ROOT}` is not your git clone; that's fine, since the stamp script only writes to `~/.tmux/claude-sessions`.
+
+Requires `jq` on PATH. `Stop` re-stamps on every turn, so sessions that were already running when you installed this register themselves the next time they finish a turn (after `/reload-plugins`). No seeding step, no restarts.
+
+### 3. Refill titles that are already empty
+
+The title hook only fires on a title change. Panes that are empty right now need a one-time fix:
 
 ```bash
 tmux list-panes -a -F '#{pane_id}	#{pane_title}' | awk -F'\t' '$2==""{print $1}' | xargs -I{} tmux select-pane -t {} -T "$(hostname)"
@@ -110,25 +98,48 @@ tmux list-panes -a -F '#{pane_id}	#{pane_title}' | awk -F'\t' '$2==""{print $1}'
 
 (The separator in the `-F` format is a literal tab.)
 
-### 5. Check
+### 4. Check
 
 ```bash
-~/.tmux/hooks/claude-resurrect-status.sh
+~/.tmux/plugins/tmux-claude-resurrect/claude-resurrect-status.sh
 ```
 
-Run it after the next save (`prefix + Ctrl-s`, or wait for tmux-continuum's autosave). See [Am I safe to restart?](#am-i-safe-to-restart)
+(The path differs if you set `TMUX_PLUGIN_MANAGER_PATH` or keep plugins under the XDG config dir.) Run it after the next save (`prefix + Ctrl-s`, or wait for tmux-continuum's autosave). See [Am I safe to restart?](#am-i-safe-to-restart)
+
+### Manual install
+
+Without tpm/tempo, or if you'd rather have `settings.json` entries than a plugin, clone the repo anywhere (say `~/src/tmux-claude-resurrect`). The scripts must stay together: the save hook finds `claude-resurrect-rewrite.awk` via `$(dirname "$0")`.
+
+tmux: add `run-shell ~/src/tmux-claude-resurrect/claude-resurrect.tmux` to `~/.tmux.conf` (anywhere; order doesn't matter), then `tmux source-file ~/.tmux.conf`.
+
+Claude Code: add to the `"hooks"` object in `~/.claude/settings.json`:
+
+```json
+"SessionStart": [
+  { "hooks": [ { "type": "command", "command": "~/src/tmux-claude-resurrect/claude-pane-stamp.sh" } ] }
+],
+"Stop": [
+  { "hooks": [ { "type": "command", "command": "~/src/tmux-claude-resurrect/claude-pane-stamp.sh" } ] }
+]
+```
+
+Steps 3 and 4 apply unchanged (with the status script at its clone path).
 
 ## File layout
 
 ```
-~/.claude/settings.json                     # SessionStart + Stop entries (step 1)
-~/.claude/hooks/claude-pane-stamp.sh        # stamp hook (step 1)
-~/.tmux/hooks/claude-resurrect-save.sh      # post-save hook (step 2)
-~/.tmux/hooks/claude-resurrect-rewrite.awk  # row rewrite, called by the save hook (step 2)
-~/.tmux/hooks/claude-resurrect-status.sh    # restart-safety check (step 2)
-~/.tmux.conf                                # 4 config lines (step 3)
-~/.tmux/claude-sessions/                    # runtime: session_id per pane_id
+.claude-plugin/plugin.json        # Claude Code plugin manifest (tmux-pane-stamp)
+.claude-plugin/marketplace.json   # the repo as a one-plugin marketplace (tmux-claude-resurrect)
+hooks/hooks.json                  # SessionStart + Stop -> claude-pane-stamp.sh
+claude-pane-stamp.sh              # stamp hook (Claude Code half)
+claude-resurrect.tmux             # tpm/tempo entry: wires resurrect options + title hook (tmux half)
+claude-resurrect-save.sh          # post-save hook
+claude-resurrect-rewrite.awk      # row rewrite, called by the save hook
+claude-resurrect-status.sh        # restart-safety check
+test/run.sh                       # tests
 ```
+
+Installed, the tmux half lives in `~/.tmux/plugins/tmux-claude-resurrect/`, the Claude Code half in Claude Code's plugin cache, and the only state either writes is `~/.tmux/claude-sessions/` (runtime: session_id per pane_id).
 
 ## Am I safe to restart?
 
@@ -193,7 +204,7 @@ Claude Code clears the pane title on exit. tmux-resurrect's `dump_panes` parses 
 - `history_size` lands in `pane_command` and gets passed to `ps` as a pid
 - `full_command` becomes argv of some unrelated process, which can be *another pane's* `claude -r <id>`
 
-Upstream hasn't fixed this. The mitigation needs no fork: the `pane-title-changed` hook in step 3 refills an empty title with the hostname, and step 4 fixes panes that are already empty. As a backstop, the awk refuses to touch a shifted row (one whose `pane_command` field is all digits), so it never turns garbage into a claude, and the status script counts such rows.
+Upstream hasn't fixed this. The mitigation needs no fork: the `pane-title-changed` hook that `claude-resurrect.tmux` installs refills an empty title with the hostname, and [installation step 3](#3-refill-titles-that-are-already-empty) fixes panes that are already empty. The hook must be exactly the shape in that script (verified on tmux 3.7c): `#{hook_pane}` and `#{host}` only expand inside `run-shell`, and the `if -F` guard stops the hook from re-firing on its own title change forever. As a backstop, the awk refuses to touch a shifted row (one whose `pane_command` field is all digits), so it never turns garbage into a claude, and the status script counts such rows.
 
 ### pane_current_command quirk
 
@@ -221,6 +232,8 @@ test/run.sh
 
 1. **Rewrite**: runs `claude-resurrect-rewrite.awk` over a fixture in the real save format: absolute-path argv, stale `-r`, print mode, unstamped claude, an nvim path containing "claude", a stamped pane running a shell, and a shifted row from an empty title.
 2. **Stamp**: runs `claude-pane-stamp.sh` under a throwaway tmux server (`tmux -L`) with a fake claude, including a nested claude that must not overwrite the stamp. The fake claude is a *symlink* to bash named `claude`, so argv shows `.../claude` the way the real binary does. A *copy* of `/bin/bash` is killed by macOS code-signing enforcement.
+3. **Save hook**: runs `claude-resurrect-save.sh` itself against that server, with `@resurrect-dir` pointed at a fixture and the last listed pane holding an empty stamp file, the case that once aborted the hook under `errexit` before it rewrote anything.
+4. **Entry script**: runs `claude-resurrect.tmux` twice against that server and checks it appends `claude` to an existing `@resurrect-processes` once, points the post-save hook at the clone, and that the title hook refills a title cleared by the escape sequence.
 
 ## Limitations
 
@@ -236,7 +249,8 @@ test/run.sh
 
 ## Dependencies
 
-- [tmux-resurrect](https://github.com/tmux-plugins/tmux-resurrect) (upstream)
-- [Claude Code](https://docs.anthropic.com/en/docs/claude-code) (with hooks support)
+- [tmux-resurrect](https://github.com/tmux-plugins/tmux-resurrect) (upstream; declare it alongside this plugin)
+- [tpm](https://github.com/tmux-plugins/tpm) or tempo, or the [manual install](#manual-install)
+- [Claude Code](https://docs.anthropic.com/en/docs/claude-code) with plugin support (2.1.275+ for the one-step install)
 - `jq`
 - `awk`
