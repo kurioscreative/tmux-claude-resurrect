@@ -106,6 +106,14 @@ tmux list-panes -a -F '#{pane_id}	#{pane_title}' | awk -F'\t' '$2==""{print $1}'
 
 (The path differs if you set `TMUX_PLUGIN_MANAGER_PATH` or keep plugins under the XDG config dir.) Run it after the next save (`prefix + Ctrl-s`, or wait for tmux-continuum's autosave). See [Am I safe to restart?](#am-i-safe-to-restart)
 
+### Optional: a key for the status check
+
+```tmux
+set -g @claude-resurrect-status-key 'C-i'
+```
+
+With this set, `prefix + Ctrl-i` opens the status check in a floating popup that closes on any key (tmux ≥ 3.2). Unset by default, so the plugin never claims a key on its own. Note that Ctrl-i and Tab are the same byte in a terminal, so this also takes `prefix + Tab`.
+
 ### Manual install
 
 Without tpm/tempo, or if you'd rather have `settings.json` entries than a plugin, clone the repo anywhere (say `~/src/tmux-claude-resurrect`). The scripts must stay together: the save hook finds `claude-resurrect-rewrite.awk` via `$(dirname "$0")`.
