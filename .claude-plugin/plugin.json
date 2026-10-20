@@ -1,0 +1,6 @@
+{
+  "name": "tmux-pane-stamp",
+  "version": "0.1.0",
+  "description": "Records each tmux pane's Claude Code session id so tmux-resurrect can resume it (the Claude Code half of tmux-claude-resurrect).",
+  "author": { "name": "kurioscreative" }
+}

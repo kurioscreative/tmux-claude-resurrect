@@ -93,4 +93,15 @@ got1=$(awk -F'\t' -v i="$i1" '$6==i {print $11}' "$rdir/save.txt"); got2=$(awk -
 [[ "$got1" == ':claude -r eeeeeeee-0000-0000-0000-00000000000e' ]] && ok "save hook maps the live pane by session:window:pane" || bad "mapped row: '$got1'"
 [[ "$got2" == ':claude' ]] && ok "empty stamp falls back to bare claude" || bad "empty-stamp row: '$got2'"
 
+# ---------- 4. tmux plugin entry script ----------
+# Runs against the same throwaway server: appends claude to an existing
+# process list once, points the post-save hook here, and refills an empty title.
+tmux -L "$S" set -g @resurrect-processes 'vim ssh'
+TMUX="$sock,0,0" ./claude-resurrect.tmux; TMUX="$sock,0,0" ./claude-resurrect.tmux
+[[ "$(tmux -L "$S" show -gqv @resurrect-processes)" == 'vim ssh claude' ]] && ok "entry script appends claude once, keeps the user's list" || bad "processes: $(tmux -L "$S" show -gqv @resurrect-processes)"
+[[ "$(tmux -L "$S" show -gqv @resurrect-hook-post-save-all)" == "$ROOT/claude-resurrect-save.sh" ]] && ok "entry script points the post-save hook at its own clone" || bad "post-save hook: $(tmux -L "$S" show -gqv @resurrect-hook-post-save-all)"
+tmux -L "$S" send-keys -t "$p1" "printf '\\033]2;hello\\007'" Enter; sleep 0.4
+tmux -L "$S" send-keys -t "$p1" "printf '\\033]2;\\007'" Enter; sleep 0.6
+[[ -n "$(tmux -L "$S" display -p -t "$p1" '#{pane_title}')" ]] && ok "empty pane title is refilled by the hook" || bad "title stayed empty"
+
 echo; [[ $fail == 0 ]] && echo "all tests passed" || { echo "some tests FAILED"; exit 1; }
