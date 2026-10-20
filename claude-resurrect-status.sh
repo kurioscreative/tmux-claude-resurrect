@@ -7,6 +7,9 @@
 
 set -uo pipefail
 
+# --pause: wait for a key before exiting, for use inside a tmux popup.
+pause() { [[ "${1:-}" == "--pause" ]] && { printf '\n(any key to close)'; read -rsn1; }; }
+
 RESURRECT_DIR=$(tmux show-option -gqv @resurrect-dir 2>/dev/null | sed "s,\$HOME,$HOME,g; s,~,$HOME,g")
 if [[ -z "$RESURRECT_DIR" ]]; then
     RESURRECT_DIR="$HOME/.tmux/resurrect"
@@ -52,7 +55,9 @@ echo "claude panes: $total   saved: $saved   not in save: $unsaved   unstamped: 
 echo "last save: $(basename "$last")   corrupt rows: $corrupt   panes with empty title now: $empty_titles"
 if (( total == saved && corrupt == 0 )); then
     echo "VERDICT: OK. A restart restores every claude pane and no row is corrupt."
+    pause "${1:-}"
 else
     echo "VERDICT: GAP. See the lines above."
+    pause "${1:-}"
     exit 1
 fi

@@ -103,5 +103,8 @@ TMUX="$sock,0,0" ./claude-resurrect.tmux; TMUX="$sock,0,0" ./claude-resurrect.tm
 tmux -L "$S" send-keys -t "$p1" "printf '\\033]2;hello\\007'" Enter; sleep 0.4
 tmux -L "$S" send-keys -t "$p1" "printf '\\033]2;\\007'" Enter; sleep 0.6
 [[ -n "$(tmux -L "$S" display -p -t "$p1" '#{pane_title}')" ]] && ok "empty pane title is refilled by the hook" || bad "title stayed empty"
+[[ -z "$(tmux -L "$S" list-keys -T prefix | grep claude-resurrect-status)" ]] && ok "no status key bound unless the option is set" || bad "status key bound by default"
+tmux -L "$S" set -g @claude-resurrect-status-key 'C-i'; TMUX="$sock,0,0" ./claude-resurrect.tmux
+[[ "$(tmux -L "$S" list-keys -T prefix | grep -c 'C-i .*display-popup.*claude-resurrect-status.sh. --pause')" == 1 ]] && ok "@claude-resurrect-status-key binds a popup on the given key" || bad "status key: $(tmux -L "$S" list-keys -T prefix | grep C-i)"
 
 echo; [[ $fail == 0 ]] && echo "all tests passed" || { echo "some tests FAILED"; exit 1; }
